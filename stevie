@@ -1,0 +1,168 @@
+#!/usr/bin/env python3.2
+import subprocess
+import sys
+import os
+from math import floor
+import re
+
+display = [
+    "hostname",
+    "version",
+    "startupdisk",
+    "disk",
+    "itunes",
+    "cpu",
+    "cpusage",
+    "memusage",
+    "uptime"
+];
+
+class Stevie:
+    def __init__(self):
+        self.top = None;
+        try:
+            self.trows, self.tcolumns = os.popen('stty size', 'r').read().split();
+        except ValueError:
+            self.trows, self.tcolumns = 24, 80; # Standard on most of Terminal.app's styles
+        self.Template = ''' 
+\033[38;5;$34m                      .;,           \033[0m  
+\033[38;5;$34m                    ;G##f           \033[0m{info[0]}
+\033[38;5;$34m                  t#####j           \033[0m{info[1]}
+\033[38;5;$34m                 t####;             \033[0m{info[2]}
+\033[38;5;$34m                f###k               \033[0m{info[3]}
+\033[38;5;$34m       .t####K\ '""   /#######j;    \033[0m{info[4]}
+\033[38;5;$34m     /#########################K.   \033[0m{info[5]}
+\033[38;5;$34m   /############################j   \033[0m{info[6]}
+\033[38;5;$214m  /###########################j     \033[0m{info[7]}
+\033[38;5;$214m  K##########################t      \033[0m{info[8]}
+\033[38;5;$202m  ###########################       \033[0m{info[9]}
+\033[38;5;$202m  ##########################;       \033[0m{info[10]}
+\033[38;5;$160m  K##########################       \033[0m{info[11]}
+\033[38;5;$160m  f###########################;     \033[0m{info[12]}
+\033[38;5;$90m   #############################j   \033[0m{info[13]}
+\033[38;5;$90m    G###########################W   \033[0m{info[14]}
+\033[38;5;$33m      #########################E    \033[0m{info[15]}
+\033[38;5;$33m       \K############W######t'      \033[0m{info[16]}
+\033[38;5;$33m         \#####;     \#####'        \033[0m{info[17]}
+''';
+
+    def get_top(self):
+        self.top = subprocess.check_output(["top", "-l 2", "-n 0", "-R"]).decode("utf-8");
+    
+    def output(self, info=[], custom=None):     
+        for outstr in info:
+            outstr[0] = "\033[1m"+outstr[0]+"\033[0m";
+            original_len = len(outstr[1]);
+            outstr[1] = outstr[1][0:((int(self.tcolumns)-37-len(outstr[0]))+5)];
+            if (len(outstr[1]) < original_len):
+                 outstr[1] = outstr[1] + "...";
+            info[info.index(outstr)] = " ".join(outstr);
+        padding = floor((18 - len(info)) / 2);
+        if (custom == None):
+            print(self.Template.format(info=([""] * int(padding) + info) + ([""]*int(18-len(info)-padding))));
+        else:
+            print(self.Template.format(info=([""] * int(padding) + info) + ([""]*int(17-len(info)-padding))+[custom]));
+    
+    def get_version(self, fstring="{os} {ver} ({build})"):
+        OSName = subprocess.check_output(["sw_vers", "-productName"]).strip().decode('utf-8');
+        OSVersion = subprocess.check_output(["sw_vers", "-productVersion"]).strip().decode('utf-8');
+        OSBuild = subprocess.check_output(["sw_vers", "-buildVersion"]).strip().decode('utf-8');
+        return ["System Version:", fstring.format(os=OSName, ver=OSVersion, build=OSBuild)];
+        
+    def get_itunes(self, fstring="{os} {ver} ({build})"):
+        ascriptrun = 'tell application "System Events" to set is_running to exists (processes where name is "iTunes")'
+        ascripttrack = '''tell application "iTunes"\n if player state is playing\n get name of current track\n end if\n end tell''';
+        track = None
+        if (subprocess.check_output(["osascript", "-e", ascriptrun]).decode('utf-8').strip() == "true"):
+            track = subprocess.check_output(["osascript", "-e", ascripttrack]).strip().decode('utf-8');
+        if (not track or len(track) <= 0):
+            track = "--";
+        return ["Now Playing:", str(track)];
+    
+    def get_hostname(self, fstring="{host}"):
+        host = subprocess.check_output(["uname", "-n"]).strip().decode('utf-8');
+        return ["Hostname:", fstring.format(host=host)];
+    
+    def get_free(self, fstring="{free} free, {tot} total on /"):
+        df = subprocess.check_output(["df", "-H", "/"]).decode('utf-8').split('\n')[1].split();
+        return ["Disk Usage:", fstring.format(used=df[2]+"B", free=df[3]+"B", tot=df[1]+"B")];
+    
+    def startup_disk(self):
+        ascriptd = 'tell application "Finder" to get name of startup disk';
+        startup = subprocess.check_output(["osascript", "-e", ascriptd]).strip().decode('utf-8');
+        return ["Startup Disk:", startup];
+    
+    def usage(self, fstring="{total}% ({user} u, {system} s)"):
+        if (not self.top):
+            self.get_top();
+        usages = re.findall(r"CPU usage: ([0-9]{1,2}\.[0-9]{1,2}).*?([0-9]{1,2}\.[0-9]{1,2})", self.top);
+        assert len(usages[1]) == 2;
+        total = 0;
+        for v in usages[1]:
+            total = total + float(v);
+        assert total < 100;
+        return ["CPU Usage:", fstring.format(total=str(total)[0:4], user=usages[1][0], system=usages[1][1])]; 
+    
+    def memory(self, fstring="{free} free/{total} total"):
+        if (not self.top):
+            self.get_top();
+        usages = re.findall(r"PhysMem: .+", self.top);
+        usages = usages[0].split(", ");
+        unit = " MB";
+        total = int(subprocess.check_output(["sysctl", "hw.memsize"]).decode("utf-8").split(": ")[1]) / (1024*1024);
+        if (len(str(total)) >= 4):
+            unit = " GB";
+            total = total / 1024;
+        used = int(usages[-2].split("M")[0]);
+        free = int(usages[-1].split("M")[0]);
+        if (unit == " GB"):
+            used = str(used / 1024)[0:4];
+            free = str(free / 1024)[0:4];
+        else:
+            used = str(used);
+            free = str(free);    
+        return ["Memory:", fstring.format(total=str(total)+unit, free=free+unit, used=used+unit)];
+    
+    def cpuname(self):
+        cpuname = " ".join(subprocess.check_output(["sysctl", "machdep.cpu.brand_string"]).decode("utf-8").strip().split(": ")[-1].split());
+        return ["CPU:", cpuname];
+    
+    def uptime(self, fstring="{days} days, {hours} hours, {minutes} mins"):
+        bt = subprocess.check_output(["sysctl", "kern.boottime"]).decode("utf-8").strip();
+        bt = int(re.search(r"sec = ([0-9]){10}", bt).group().split()[-1]);
+        currenttime = __import__("time").time();
+        secondsup = floor(currenttime - bt);
+        minutesup = floor(secondsup / 60) % 60;
+        hoursup = floor(secondsup / 60 / 60) % 24;
+        daysup = floor(secondsup / 60 / 60 / 24);   
+        return ["Uptime:", fstring.format(days=daysup, hours=hoursup, minutes=minutesup, secs=secondsup)];
+        
+def main():
+    if (len(sys.argv) >= 2 and sys.argv[1] == "-v"):
+        print("stevie 0.4 -- A clone of archey for OS X.");
+        print("Created by stal of The Hackerzz Group Inc.")
+        print("Released under the non-terms of the Anti-License")
+    else:
+        s = Stevie();
+        _display = {
+            "cpu": s.cpuname,
+            "cpusage": s.usage,
+            "disk": s.get_free,
+            "hostname": s.get_hostname,
+            "itunes": s.get_itunes,
+            "memusage": s.memory,
+            "startupdisk": s.startup_disk,
+            "uptime": s.uptime,
+            "version": s.get_version,
+        };
+        info = [];
+        for opt in display:
+            if (opt in _display):
+                info.append(_display[opt]());
+        if ("-c" not in sys.argv):
+            s.output(info);    
+        else:
+            s.output(info, " ".join(sys.argv[sys.argv.index("-c")+1:]));    
+
+if __name__ == "__main__":
+    main();
